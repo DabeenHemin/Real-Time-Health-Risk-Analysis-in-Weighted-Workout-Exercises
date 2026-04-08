@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+
+# Large data files
+data/
+*.mp4
+*.avi
+*.mov
+
+# PyCharm
+.idea/
+
+# Models (optional - include if large)
+*.pkl
