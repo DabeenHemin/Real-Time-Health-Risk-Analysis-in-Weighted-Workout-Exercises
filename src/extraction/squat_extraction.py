@@ -1,10 +1,10 @@
-#Imports
-
 import os # os lets the system navigate thorugh files and reads them
 import re # re is used the organise files by splitting filenames into text and numbers
 
 import cv2 # Allows for image processing and video capture
 import mediapipe as mp # This will be used to identify key body locations, analyze posture, and categorize movements
+
+import numpy as np # Numpy is used for numerical calculations and array operations needed for angle calculation
 
 squat_dataset = "../../data/squat/Unfinished_Optimised_Squat_Dataset"
 mp_pose = mp.solutions.pose
@@ -14,17 +14,27 @@ def file_sorting(name):
     parts = re.split(r'(\d+)', name)
     return [int(p) if p.isdigit() else p.lower() for p in parts]
 
-# Checks the dataset folder exists before doing anything
+# Calculates the angles between the 3 joint points using arctan2
+def calculate_angle(a, b, c):
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
+    angle = np.abs(radians * 180.0 / np.pi)
+    if angle > 180:
+        angle = 360 - angle
+    return round(angle, 2)
+
+#  Checks the dataset folder to see if it exists before doing anything
 if not os.path.exists(squat_dataset):
     print(f"ERROR: Dataset folder not found at: {squat_dataset}")
     exit()
 
 # Select the first available video from the dataset for testing
-test_video_path = None
+first_video = None
 for view in ["Side", "Front"]:
     view_path = os.path.join(squat_dataset, view)
 
-    # Skips over missing view folders
     if not os.path.exists(view_path):
         print(f"WARNING: {view} folder not found, skipping...")
         continue
@@ -32,107 +42,113 @@ for view in ["Side", "Front"]:
     for folder in os.listdir(view_path):
         folder_path = os.path.join(view_path, folder)
 
-        # Ignore files and only process label directories
         if not os.path.isdir(folder_path):
             continue
 
         for f in sorted(os.listdir(folder_path), key=file_sorting):
             if f.lower().endswith((".mp4", ".mov", ".avi", ".m4v")):
-                test_video_path = os.path.join(folder_path, f)
+                first_video = os.path.join(folder_path, f)
                 break
 
-        if test_video_path:
+        if first_video:
             break
 
-    if test_video_path:
+    if first_video:
         break
 
-# Check a video was actually found before trying to open it
-if test_video_path is None:
+# Checks a video to see if it was actually found before trying to open it
+if first_video is None:
     print("ERROR: No video files found in the dataset. Check your folder structure.")
     exit()
 
-print(f"Testing on: {test_video_path}")
+print(f"Testing angles on: {first_video}")
 
-cap = cv2.VideoCapture(test_video_path)
+cap = cv2.VideoCapture(first_video)
 
-# Check the video file opened successfully
+# Checks the video file to see if it opened successfully
 if not cap.isOpened():
-    print(f"ERROR: Could not open video file: {test_video_path}")
+    print(f"ERROR: Could not open video file: {first_video}")
     exit()
 
-frame_count = 0
-mp_drawing = mp.solutions.drawing_utils
+frames_processed = 0
+pose_drawer = mp.solutions.drawing_utils
 
-# Initialise MediaPipe Pose for landmark detection on a user
+# Sets up mediapipe pose estimation model so it can start tracking the person
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_count += 1
+        frames_processed += 1
 
-        # Frame skipping disabled for Stage 1 so every frame is visible for testing
-        # if frame_count % 3 != 0:
-        #     continue
-
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # Catches any errors that may occur during MediaPipe processing
+        # Skips the frame if mediapipe runs into a problem
         try:
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = pose.process(rgb_frame)
         except Exception as e:
-            print(f"ERROR: MediaPipe failed on frame {frame_count}: {e}")
+            print(f"ERROR: MediaPipe failed on frame {frames_processed}: {e}")
             continue
 
         if results.pose_landmarks:
             lm = results.pose_landmarks.landmark
 
-            # Draw the full skeleton and keypoints onto the frame
-            mp_drawing.draw_landmarks(
+            # Draws the full skeleton onto the frame
+            pose_drawer.draw_landmarks(
                 frame,
                 results.pose_landmarks,
                 mp_pose.POSE_CONNECTIONS
             )
 
-            # Extract left and right knee landmark positions
-            lk = lm[mp_pose.PoseLandmark.LEFT_KNEE.value]
-            rk = lm[mp_pose.PoseLandmark.RIGHT_KNEE.value]
+            # Grabs the x and y positions of each joint needed
+            ls = [lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
+            lh = [lm[mp_pose.PoseLandmark.LEFT_HIP.value].x,      lm[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+            lk = [lm[mp_pose.PoseLandmark.LEFT_KNEE.value].x,     lm[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+            la = [lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,    lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
 
-            # Highlight the knee landmarks specifically in red
+            # Works out the angles between the joints for the squat
+            knee_ang  = calculate_angle(lh, lk, la)
+            hip_ang   = calculate_angle(ls, lh, lk)
+            torso_ang = calculate_angle(ls, lh, la)
+
+            # Gets pixel positions to place angle text on screen
             h, w, _ = frame.shape
-            lk_px = (int(lk.x * w), int(lk.y * h))
-            rk_px = (int(rk.x * w), int(rk.y * h))
-            cv2.circle(frame, lk_px, 8, (0, 0, 255), -1)
-            cv2.circle(frame, rk_px, 8, (0, 0, 255), -1)
+            lk_px = (int(lk[0] * w), int(lk[1] * h))
+            lh_px = (int(lh[0] * w), int(lh[1] * h))
+            ls_px = (int(ls[0] * w), int(ls[1] * h))
 
-            # Label the knee landmarks on the frame
-            cv2.putText(frame, "L Knee", (lk_px[0] + 10, lk_px[1]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            cv2.putText(frame, "R Knee", (rk_px[0] + 10, rk_px[1]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            # Puts the angle numbers on the screen next to each joint
+            # Green for knee, yellow for hip, pink for torso
+            cv2.putText(frame, f"Knee: {knee_ang}",
+                        (lk_px[0] + 10, lk_px[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-            # Show the current frame number on screen
-            cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, f"Hip: {hip_ang}",
+                        (lh_px[0] + 10, lh_px[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
+            cv2.putText(frame, f"torso: {torso_ang}",
+                        (ls_px[0] + 10, ls_px[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+
+            # Prints angles to terminal as well
             print(
-                f"Frame {frame_count}: "
-                f"Left knee x={lk.x:.3f} y={lk.y:.3f} | "
-                f"Right knee x={rk.x:.3f} y={rk.y:.3f}"
+                f"Frame {frames_processed}: "
+                f"knee={knee_ang}  "
+                f"hip={hip_ang}  "
+                f"torso={torso_ang}"
             )
         else:
-            print(f"Frame {frame_count}: No person detected")
+            print(f"Frame {frames_processed}: No person detected")
 
-        # Display the frame in a window at normal speed (30ms per frame)
-        cv2.imshow("Squat Pose Detection Test", frame)
+        # Displays the frame in a window at normal speed
+        cv2.imshow("Squat Pose Detection", frame)
 
-        # Press Q at any time to quit the window early
+        # Press Q at any time to quit early
         if cv2.waitKey(30) & 0xFF == ord('q'):
-            print("Test aborted")
+            print("Test stopped early by user")
             break
 
 cv2.destroyAllWindows()
 cap.release()
-print("MediaPipe is detecting landmarks correctly")
+print("Angle calculation working.Knee, hip, and torso angles confirmed")
