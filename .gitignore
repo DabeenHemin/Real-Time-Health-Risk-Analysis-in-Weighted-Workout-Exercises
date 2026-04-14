@@ -18,5 +18,3 @@ data/
 # PyCharm
 .idea/
 
-# Models (optional - include if large)
-*.pkl
