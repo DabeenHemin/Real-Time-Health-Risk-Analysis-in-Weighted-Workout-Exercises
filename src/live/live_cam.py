@@ -1,0 +1,60 @@
+#Import Packages
+
+import cv2 # Allows for image processing and video capture
+import mediapipe as mp # This will be used to identify key body locations, analyze posture, and categorize movements.
+
+# Initialise the Mediapipe pose to inspect the live cam footage model and find landmarks (keypoints)
+# Initialise drawing utilites which draw connections between landmark to create a skeleton overlay over an indvidual
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+
+# Start video capture from default webcam
+live_cam =cv2.VideoCapture(0)
+
+# Detects if webcam is avalible
+if not live_cam.isOpened():
+    print("Live cam not enabled")
+    exit()
+
+# Creates and implaments pose detection model with 2 cofindece thresholds
+# to tells how confident it has to be to dectect a person and how confident it is to detect a pose and keep following it smoothly across frames
+with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+
+    # Process frames continuously while webcam is active
+    while live_cam.isOpened():
+
+        ret, frame = live_cam.read()
+        # Stop if frame cannot be read
+        if not ret:
+            print("Live feed over")
+            break
+
+        frame = cv2.flip(frame, 1) # Flips the live cam to make it mirror like and not confuse a user whilst using it
+
+        # Convert image to RGB (required for MediaPipe processing)
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image.flags.writeable = False
+        results = pose.process(image)
+
+        # Convert back to BGR for OpenCV display
+        image.flags.writeable = True
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        # Draw pose landmarks if detected
+        if results.pose_landmarks:
+            mp_drawing.draw_landmarks(
+                image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(color=(255,255,255), thickness=2, circle_radius=2),
+                mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=4, circle_radius=6),
+            )
+
+        # Display the processed frame
+        cv2.imshow("Live Webcam",image)
+
+        # Stops program when the 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+live_cam.release()
+cv2.destroyAllWindows()
+
