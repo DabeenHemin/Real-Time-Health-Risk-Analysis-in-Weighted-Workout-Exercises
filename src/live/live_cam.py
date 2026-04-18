@@ -1,3 +1,6 @@
+# Dabeen Hemin - FYP: Real-Time Health Risk Analysis
+# Live squat form analysis app using trained front and side view models
+
 # Import Packages
 import warnings
 warnings.filterwarnings("ignore")
@@ -27,6 +30,9 @@ side_label_encoder = joblib.load(os.path.join(models_path, "side_label_encoder.p
 
 print("All models loaded successfully!")
 
+# initialise prediction variable
+prediction = "Ready"
+
 # calculates the angle between 3 joint points using arctan2
 def calculate_angle(a, b, c):
     a = np.array(a)
@@ -40,7 +46,6 @@ def calculate_angle(a, b, c):
 
 # detects if the user is facing front or side on
 # compares shoulder width vs shoulder depth for more reliable detection
-# works regardless of camera distance unlike the previous shoulder width only method
 def detect_view(landmarks):
     left_shoulder_x  = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x
     right_shoulder_x = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x
@@ -50,8 +55,6 @@ def detect_view(landmarks):
     shoulder_width = abs(left_shoulder_x - right_shoulder_x)
     shoulder_depth = abs(left_shoulder_z - right_shoulder_z)
 
-    # front: shoulders wide apart and similar depth
-    # side: shoulders close together and very different depth
     if shoulder_width > shoulder_depth:
         return "Front"
     else:
@@ -123,12 +126,41 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             # calculate average knee angle
             avg_knee = (left_knee_angle + right_knee_angle) / 2
 
-            # display view on screen
+            # build feature dataframe matching training data columns
+            features = pd.DataFrame([[
+                left_knee_angle, left_hip_angle, left_trunk_angle,
+                right_knee_angle, right_hip_angle, right_trunk_angle,
+                knee_distance, ankle_distance, knee_ankle_ratio,
+                left_knee_foot_offset, right_knee_foot_offset
+            ]], columns=[
+                "left_knee_angle", "left_hip_angle", "left_trunk_angle",
+                "right_knee_angle", "right_hip_angle", "right_trunk_angle",
+                "knee_distance", "ankle_distance", "knee_ankle_ratio",
+                "left_knee_foot_offset", "right_knee_foot_offset"
+            ])
+
+            # show ready when standing upright
+            # classify when person is squatting
+            if avg_knee > 170:
+                prediction = "Ready"
+            else:
+                # scale features and classify using the correct model
+                if view == "Front":
+                    scaled_features = front_scaler.transform(features)
+                    prediction      = front_label_encoder.inverse_transform(
+                        front_model.predict(scaled_features)
+                    )[0]
+                else:
+                    scaled_features = side_scaler.transform(features)
+                    prediction      = side_label_encoder.inverse_transform(
+                        side_model.predict(scaled_features)
+                    )[0]
+
+            # display view and prediction on screen
             cv2.putText(image, f"View: {view}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-            # print features to terminal to confirm extraction is working
-            print(f"View: {view} | Knee: {avg_knee} | Ratio: {round(knee_ankle_ratio, 3)}")
+            cv2.putText(image, f"Class: {prediction}", (10, 65),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
         cv2.imshow("Live Webcam", image)
 
