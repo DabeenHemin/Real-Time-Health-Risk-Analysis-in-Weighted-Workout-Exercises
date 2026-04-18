@@ -1,19 +1,16 @@
-# Dabeen Hemin - FYP: Real-Time Health Risk Analysis
-# Live squat form analysis app using trained front and side view models
-
 # Import Packages
 import warnings
 warnings.filterwarnings("ignore")
-import os   # used to build file paths to the model files
+import os
 os.environ["GLOG_minloglevel"] = "3"
 
-import cv2  # Allows for image processing and video capture
-import mediapipe as mp  # This will be used to identify key body locations, analyze posture, and categorize movements
-import numpy as np      # used for numerical calculations needed for angle calculation
-import joblib           # used to load the trained model files
+import cv2
+import mediapipe as mp
+import numpy as np
+import joblib
+import pandas as pd
 
-# Initialise the Mediapipe pose to inspect the live cam footage model and find landmarks (keypoints)
-# Initialise drawing utilities which draw connections between landmarks to create a skeleton overlay over an individual
+# Initialise mediapipe pose and drawing utilities
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 
@@ -42,16 +39,20 @@ def calculate_angle(a, b, c):
     return round(angle, 2)
 
 # detects if the user is facing front or side on
-# measures horizontal distance between shoulders to determine view
+# compares shoulder width vs shoulder depth for more reliable detection
+# works regardless of camera distance unlike the previous shoulder width only method
 def detect_view(landmarks):
     left_shoulder_x  = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x
     right_shoulder_x = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x
+    left_shoulder_z  = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].z
+    right_shoulder_z = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].z
 
-    # if shoulders are far apart the user is facing front
-    # if shoulders are close together the user is side on
     shoulder_width = abs(left_shoulder_x - right_shoulder_x)
+    shoulder_depth = abs(left_shoulder_z - right_shoulder_z)
 
-    if shoulder_width > 0.08:
+    # front: shoulders wide apart and similar depth
+    # side: shoulders close together and very different depth
+    if shoulder_width > shoulder_depth:
         return "Front"
     else:
         return "Side"
@@ -64,31 +65,23 @@ if not live_cam.isOpened():
     print("Live cam not enabled")
     exit()
 
-# Creates and implements pose detection model with 2 confidence thresholds
-# to tell how confident it has to be to detect a person and how confident it is to detect a pose and keep following it smoothly across frames
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
 
-    # Process frames continuously while webcam is active
     while live_cam.isOpened():
 
         ret, frame = live_cam.read()
-        # Stop if frame cannot be read
         if not ret:
             print("Live feed over")
             break
 
-        frame = cv2.flip(frame, 1)  # Flips the live cam to make it mirror like and not confuse a user whilst using it
+        frame = cv2.flip(frame, 1)
 
-        # Convert image to RGB (required for MediaPipe processing)
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image.flags.writeable = False
         results = pose.process(image)
-
-        # Convert back to BGR for OpenCV display
         image.flags.writeable = True
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        # Draw pose landmarks if detected
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(
                 image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
@@ -96,17 +89,49 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=4, circle_radius=6),
             )
 
-            # detect which view the user is in
-            view = detect_view(results.pose_landmarks.landmark)
+            lm = results.pose_landmarks.landmark
 
-            # display the detected view on screen
+            # detect which view the user is in
+            view = detect_view(lm)
+
+            # extract landmark coordinates
+            ls = [lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,  lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
+            lh = [lm[mp_pose.PoseLandmark.LEFT_HIP.value].x,       lm[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+            lk = [lm[mp_pose.PoseLandmark.LEFT_KNEE.value].x,      lm[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+            la = [lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,     lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
+            rs = [lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x, lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y]
+            rh = [lm[mp_pose.PoseLandmark.RIGHT_HIP.value].x,      lm[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
+            rk = [lm[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,     lm[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
+            ra = [lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,    lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
+
+            # calculate joint angles
+            left_knee_angle   = calculate_angle(lh, lk, la)
+            left_hip_angle    = calculate_angle(ls, lh, lk)
+            left_trunk_angle  = calculate_angle(ls, lh, la)
+            right_knee_angle  = calculate_angle(rh, rk, ra)
+            right_hip_angle   = calculate_angle(rs, rh, rk)
+            right_trunk_angle = calculate_angle(rs, rh, ra)
+
+            # calculate distance features
+            knee_distance          = abs(lk[0] - rk[0])
+            ankle_distance         = abs(la[0] - ra[0])
+            knee_ankle_ratio       = knee_distance / ankle_distance if ankle_distance != 0 else 0
+            left_knee_foot_offset  = abs(lk[0] - la[0])
+            right_knee_foot_offset = abs(rk[0] - ra[0])
+            avg_offset             = (left_knee_foot_offset + right_knee_foot_offset) / 2
+
+            # calculate average knee angle
+            avg_knee = (left_knee_angle + right_knee_angle) / 2
+
+            # display view on screen
             cv2.putText(image, f"View: {view}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Display the processed frame
+            # print features to terminal to confirm extraction is working
+            print(f"View: {view} | Knee: {avg_knee} | Ratio: {round(knee_ankle_ratio, 3)}")
+
         cv2.imshow("Live Webcam", image)
 
-        # Stops program when the 'q' is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
