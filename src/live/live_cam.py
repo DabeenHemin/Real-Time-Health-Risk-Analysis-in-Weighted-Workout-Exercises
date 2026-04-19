@@ -1,11 +1,10 @@
-# Dabeen Hemin - FYP: Real-Time Health Risk Analysis
-# Live squat form analysis app using trained front and side view models
-
 # Import Packages
 import warnings
 warnings.filterwarnings("ignore")
 import os
 os.environ["GLOG_minloglevel"] = "3"
+
+from collections import Counter, deque
 
 import cv2
 import mediapipe as mp
@@ -29,6 +28,9 @@ side_scaler        = joblib.load(os.path.join(models_path, "side_scaler.pkl"))
 side_label_encoder = joblib.load(os.path.join(models_path, "side_label_encoder.pkl"))
 
 print("All models loaded successfully!")
+
+# stores last 5 predictions to smooth out flickering
+pred_history = deque(maxlen=5)
 
 # initialise prediction variable
 prediction = "Ready"
@@ -139,22 +141,24 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 "left_knee_foot_offset", "right_knee_foot_offset"
             ])
 
-            # show ready when standing upright
-            # classify when person is squatting
             if avg_knee > 170:
                 prediction = "Ready"
+                pred_history.clear()
             else:
-                # scale features and classify using the correct model
                 if view == "Front":
                     scaled_features = front_scaler.transform(features)
-                    prediction      = front_label_encoder.inverse_transform(
+                    raw_prediction  = front_label_encoder.inverse_transform(
                         front_model.predict(scaled_features)
                     )[0]
                 else:
                     scaled_features = side_scaler.transform(features)
-                    prediction      = side_label_encoder.inverse_transform(
+                    raw_prediction  = side_label_encoder.inverse_transform(
                         side_model.predict(scaled_features)
                     )[0]
+
+                # smooth prediction using last 5 frames to reduce flickering
+                pred_history.append(raw_prediction)
+                prediction = Counter(pred_history).most_common(1)[0][0]
 
             # display view and prediction on screen
             cv2.putText(image, f"View: {view}", (10, 30),
