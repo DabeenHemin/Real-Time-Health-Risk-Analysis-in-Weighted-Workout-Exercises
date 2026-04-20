@@ -123,7 +123,9 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             knee_ankle_ratio       = knee_distance / ankle_distance if ankle_distance != 0 else 0
             left_knee_foot_offset  = abs(lk[0] - la[0])
             right_knee_foot_offset = abs(rk[0] - ra[0])
-            avg_offset             = (left_knee_foot_offset + right_knee_foot_offset) / 2
+
+            # average offset shows how much knees are shifted inward relative to feet
+            avg_offset = (left_knee_foot_offset + right_knee_foot_offset) / 2
 
             # calculate average knee angle
             avg_knee = (left_knee_angle + right_knee_angle) / 2
@@ -147,16 +149,35 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             else:
                 if view == "Front":
                     scaled_features = front_scaler.transform(features)
+                    proba           = front_model.predict_proba(scaled_features)[0]
+                    confidence      = max(proba)
                     raw_prediction  = front_label_encoder.inverse_transform(
                         front_model.predict(scaled_features)
                     )[0]
+
+                    # only flag knees_in if both ratio is low AND offset is high
+                    # this prevents wide stances from being flagged as knees_in
+                    if raw_prediction == "knees_in":
+                        if not (knee_ankle_ratio < 0.92 and avg_offset > 0.01):
+                            raw_prediction = "good"
+
+                    # direct ratio check as backup for catching obvious knees_in
+                    if knee_ankle_ratio < 0.7 and avg_offset > 0.05:
+                        raw_prediction = "knees_in"
+
                 else:
                     scaled_features = side_scaler.transform(features)
+                    proba           = side_model.predict_proba(scaled_features)[0]
+                    confidence      = max(proba)
                     raw_prediction  = side_label_encoder.inverse_transform(
                         side_model.predict(scaled_features)
                     )[0]
 
-                # smooth prediction using last 5 frames to reduce flickering
+                    # only flag leaning forward if model is very confident
+                    if raw_prediction == "leaning_forward" and confidence < 0.80:
+                        raw_prediction = "good"
+
+                # smooth prediction using last 5 frames
                 pred_history.append(raw_prediction)
                 prediction = Counter(pred_history).most_common(1)[0][0]
 
