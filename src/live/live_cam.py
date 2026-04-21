@@ -63,12 +63,14 @@ def detect_view(landmarks):
         return "Side"
 
 # returns the skeleton colour based on the current prediction
-# returns green for good form, white for everything else
+# green for good form, red for bad form, white for ready
 def get_skeleton_colour(prediction):
-    if prediction == "good":
-        return (0, 255, 0)   # green
-    else:
+    if prediction == "Ready":
         return (255, 255, 255)  # white
+    elif prediction == "good":
+        return (0, 255, 0)      # green
+    else:
+        return (0, 0, 255)      # red
 
 # Start video capture from default webcam
 live_cam = cv2.VideoCapture(0)
