@@ -62,6 +62,14 @@ def detect_view(landmarks):
     else:
         return "Side"
 
+# returns the skeleton colour based on the current prediction
+# returns green for good form, white for everything else
+def get_skeleton_colour(prediction):
+    if prediction == "good":
+        return (0, 255, 0)   # green
+    else:
+        return (255, 255, 255)  # white
+
 # Start video capture from default webcam
 live_cam = cv2.VideoCapture(0)
 
@@ -88,11 +96,6 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         if results.pose_landmarks:
-            mp_drawing.draw_landmarks(
-                image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=2, circle_radius=2),
-                mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=4, circle_radius=6),
-            )
 
             lm = results.pose_landmarks.landmark
 
@@ -178,18 +181,20 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 pred_history.append(raw_prediction)
                 prediction = Counter(pred_history).most_common(1)[0][0]
 
-            # display view prediction and debug info on screen
+            # get skeleton colour based on current prediction
+            skeleton_colour = get_skeleton_colour(prediction)
+
+            # draw skeleton with colour based on prediction
+            mp_drawing.draw_landmarks(
+                image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(color=skeleton_colour, thickness=2, circle_radius=2),
+                mp_drawing.DrawingSpec(color=skeleton_colour, thickness=4, circle_radius=6),
+            )
+
+            # display view and prediction on screen
             cv2.putText(image, f"View: {view}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
             cv2.putText(image, f"Class: {prediction}", (10, 65),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(image, f"Knee angle: {avg_knee}", (10, 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(image, f"Ratio: {round(knee_ankle_ratio, 3)}", (10, 135),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(image, f"Ankle dist: {round(ankle_distance, 3)}", (10, 170),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(image, f"Offset: {round(avg_offset, 3)}", (10, 205),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
         cv2.imshow("Live Webcam", image)
