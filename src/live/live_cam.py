@@ -6,27 +6,23 @@ os.environ["GLOG_minloglevel"] = "3"
 
 from collections import Counter, deque
 import threading
+import subprocess
 
 import cv2
 import mediapipe as mp
 import numpy as np
 import joblib
 import pandas as pd
-import pyttsx3
 
 # Initialise mediapipe pose and drawing utilities
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 
-# initialise text to speech engine
-tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 180)
-
 # tracks state to prevent overlapping speech
 last_spoken = ""
 is_speaking = False
 
-# function that runs the speech in a separate thread so the live cam doesn't freeze
+# uses Mac native say command for reliable text to speech
 def speak(message):
     global is_speaking, last_spoken
     if is_speaking:
@@ -36,8 +32,7 @@ def speak(message):
     def run():
         global is_speaking
         try:
-            tts_engine.say(message)
-            tts_engine.runAndWait()
+            subprocess.run(['say', message], check=False, timeout=5)
         except:
             pass
         is_speaking = False
@@ -208,7 +203,6 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             else:
                 feedback = ""
 
-            # speak only when feedback changes and not currently speaking
             if feedback != last_spoken and feedback != "":
                 speak(feedback)
 
