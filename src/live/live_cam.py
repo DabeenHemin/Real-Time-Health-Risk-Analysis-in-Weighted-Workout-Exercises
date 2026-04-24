@@ -206,10 +206,21 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             if feedback != last_spoken and feedback != "":
                 speak(feedback)
 
-            cv2.putText(image, f"View: {view}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(image, feedback, (10, 65),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, skeleton_colour, 2)
+            # draw blue info banner at the top of the screen
+            cv2.rectangle(image, (0, 0), (1100, 130), (200, 80, 30), -1)
+
+            # labels on top row
+            cv2.putText(image, "VIEW", (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "CLASS", (200, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "FEEDBACK", (500, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+
+            # values on bottom row
+            cv2.putText(image, view, (20, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(image, prediction, (200, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, skeleton_colour, 2)
+            cv2.putText(image, feedback, (500, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, skeleton_colour, 2)
 
         cv2.imshow("Live Webcam", image)
 
