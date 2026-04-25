@@ -242,8 +242,15 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 
         cv2.imshow("Live Webcam", image)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        # handle key presses
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        if key == ord('r'):
+            # reset the rep counter and stage
+            counter = 0
+            current_stage = ""
+            pred_history.clear()
 
-live_cam.release()
+live_cam.select()
 cv2.destroyAllWindows()
