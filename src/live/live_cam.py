@@ -22,6 +22,10 @@ mp_drawing = mp.solutions.drawing_utils
 last_spoken = ""
 is_speaking = False
 
+# tracks rep count and stage for squat rep tracking
+counter = 0
+current_stage = ""
+
 # uses Mac native say command for reliable text to speech
 def speak(message):
     global is_speaking, last_spoken
@@ -139,6 +143,14 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 
             avg_knee = (left_knee_angle + right_knee_angle) / 2
 
+            # track squat stage and count reps
+            if avg_knee < 95:
+                current_stage = "down"
+
+            if avg_knee > 165 and current_stage == "down":
+                current_stage = "up"
+                counter += 1
+
             features = pd.DataFrame([[
                 left_knee_angle, left_hip_angle, left_trunk_angle,
                 right_knee_angle, right_hip_angle, right_trunk_angle,
@@ -211,15 +223,21 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 
             # labels on top row
             cv2.putText(image, "VIEW", (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-            cv2.putText(image, "CLASS", (200, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-            cv2.putText(image, "FEEDBACK", (500, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "CLASS", (150, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "COUNT", (350, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "STAGE", (480, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(image, "FEEDBACK", (650, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
             # values on bottom row
             cv2.putText(image, view, (20, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.putText(image, prediction, (200, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, skeleton_colour, 2)
-            cv2.putText(image, feedback, (500, 70),
+            cv2.putText(image, prediction, (150, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, skeleton_colour, 2)
+            cv2.putText(image, str(counter), (350, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(image, current_stage, (480, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(image, feedback, (650, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, skeleton_colour, 2)
 
         cv2.imshow("Live Webcam", image)
