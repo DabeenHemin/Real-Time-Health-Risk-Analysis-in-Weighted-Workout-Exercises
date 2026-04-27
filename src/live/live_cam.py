@@ -7,6 +7,7 @@ os.environ["GLOG_minloglevel"] = "3"
 from collections import Counter, deque
 import threading
 import subprocess
+import time
 
 import cv2
 import mediapipe as mp
@@ -21,18 +22,24 @@ mp_drawing = mp.solutions.drawing_utils
 # tracks state to prevent overlapping speech
 last_spoken = ""
 is_speaking = False
+last_speak_time = 0
 
 # tracks rep count and stage for squat rep tracking
 counter = 0
 current_stage = ""
 
 # uses Mac native say command for reliable text to speech
+# prevents repeat of same message within 5 seconds
 def speak(message):
-    global is_speaking, last_spoken
+    global is_speaking, last_spoken, last_speak_time
     if is_speaking:
+        return
+    # dont repeat the same message within 5 seconds
+    if message == last_spoken and time.time() - last_speak_time < 5:
         return
     is_speaking = True
     last_spoken = message
+    last_speak_time = time.time()
     def run():
         global is_speaking
         try:
@@ -143,13 +150,23 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 
             avg_knee = (left_knee_angle + right_knee_angle) / 2
 
-            # track squat stage and count reps
-            if avg_knee < 95:
-                current_stage = "down"
+            # check visibility of key landmarks before counting reps
+            # this prevents false reps when a person is walking into frame
+            hip_vis = (lm[mp_pose.PoseLandmark.LEFT_HIP.value].visibility +
+                       lm[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility) / 2
+            knee_vis = (lm[mp_pose.PoseLandmark.LEFT_KNEE.value].visibility +
+                        lm[mp_pose.PoseLandmark.RIGHT_KNEE.value].visibility) / 2
+            ankle_vis = (lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].visibility +
+                         lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value].visibility) / 2
 
-            if avg_knee > 165 and current_stage == "down":
-                current_stage = "up"
-                counter += 1
+            # only track squat stage and count reps if all key landmarks are clearly visible
+            if hip_vis > 0.7 and knee_vis > 0.7 and ankle_vis > 0.7:
+                if avg_knee < 95:
+                    current_stage = "down"
+
+                if avg_knee > 165 and current_stage == "down":
+                    current_stage = "up"
+                    counter += 1
 
             features = pd.DataFrame([[
                 left_knee_angle, left_hip_angle, left_trunk_angle,
@@ -215,7 +232,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             else:
                 feedback = ""
 
-            if feedback != last_spoken and feedback != "":
+            if feedback != "":
                 speak(feedback)
 
             # draw blue info banner at the top of the screen
@@ -252,5 +269,5 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             current_stage = ""
             pred_history.clear()
 
-live_cam.select()
+live_cam.release()
 cv2.destroyAllWindows()
