@@ -23,20 +23,30 @@ mp_drawing = mp.solutions.drawing_utils
 last_spoken = ""
 is_speaking = False
 last_speak_time = 0
+ready_spoken = False  # tracks if we have already said get ready to squat
 
 # tracks rep count and stage for squat rep tracking
 counter = 0
 current_stage = ""
 
 # uses Mac native say command for reliable text to speech
-# prevents repeat of same message within 5 seconds
+# get ready to squat is only said once per session ever
+# other messages dont repeat within 5 seconds
 def speak(message):
-    global is_speaking, last_spoken, last_speak_time
+    global is_speaking, last_spoken, last_speak_time, ready_spoken
     if is_speaking:
         return
-    # dont repeat the same message within 5 seconds
+
+    # only say get ready to squat once per session ever
+    if message == "Get ready to squat":
+        if ready_spoken:
+            return
+        ready_spoken = True
+
+    # dont repeat other messages within 5 seconds
     if message == last_spoken and time.time() - last_speak_time < 5:
         return
+
     is_speaking = True
     last_spoken = message
     last_speak_time = time.time()
@@ -151,7 +161,6 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             avg_knee = (left_knee_angle + right_knee_angle) / 2
 
             # check visibility of key landmarks before counting reps
-            # this prevents false reps when a person is walking into frame
             hip_vis = (lm[mp_pose.PoseLandmark.LEFT_HIP.value].visibility +
                        lm[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility) / 2
             knee_vis = (lm[mp_pose.PoseLandmark.LEFT_KNEE.value].visibility +
