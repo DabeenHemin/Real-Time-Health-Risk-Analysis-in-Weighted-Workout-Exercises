@@ -73,7 +73,7 @@ side_label_encoder = joblib.load(os.path.join(models_path, "side_label_encoder.p
 print("All models loaded successfully!")
 
 pred_history = deque(maxlen=5)
-prediction = "Ready"
+prediction = "Standing"
 
 def calculate_angle(a, b, c):
     a = np.array(a)
@@ -102,7 +102,7 @@ def detect_view(landmarks):
 def get_skeleton_colour(prediction):
     if prediction == "good":
         return (0, 255, 0)
-    elif prediction == "Ready":
+    elif prediction == "Standing":
         return (255, 255, 255)
     else:
         return (0, 0, 255)
@@ -190,7 +190,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             ])
 
             if avg_knee > 170:
-                prediction = "Ready"
+                prediction = "Standing"
                 pred_history.clear()
             else:
                 if view == "Front":
@@ -230,7 +230,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 mp_drawing.DrawingSpec(color=skeleton_colour, thickness=4, circle_radius=6),
             )
 
-            if prediction == "Ready":
+            if prediction == "Standing":
                 feedback = "Get ready to squat"
             elif prediction == "good":
                 feedback = "Great form keep it up"
