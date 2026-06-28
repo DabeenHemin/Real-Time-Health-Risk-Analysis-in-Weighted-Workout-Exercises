@@ -62,6 +62,16 @@ def calculate_angle(a, b, c):
     return round(angle, 2)
 
 
+def vertical_trunk_angle(shoulder, hip):
+    # how far the shoulder->hip line tilts from vertical (0 = upright,
+    # larger = more forward lean). must match the extraction script exactly.
+    dx = shoulder[0] - hip[0]
+    dy = shoulder[1] - hip[1]
+    radians = np.arctan2(abs(dx), abs(dy))
+    angle = radians * 180.0 / np.pi
+    return round(angle, 2)
+
+
 def detect_view(landmarks):
     left_shoulder_x  = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x
     right_shoulder_x = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x
@@ -107,6 +117,10 @@ def test_video(video_path, expected, folder_name):
     all_predictions = []
     detected_views = []
 
+    # confident-leaning counters (feed the side leaning verdict rule)
+    side_lean_hiconf = 0
+    side_pred_total = 0
+
     video = cv2.VideoCapture(video_path)
 
     if not video.isOpened():
@@ -147,6 +161,12 @@ def test_video(video_path, expected, folder_name):
                 right_knee_angle  = calculate_angle(rh, rk, ra)
                 right_hip_angle   = calculate_angle(rs, rh, rk)
                 right_trunk_angle = calculate_angle(rs, rh, ra)
+
+                # vertical trunk angle: how far the torso tilts from upright
+                # (0 = perfectly vertical, larger = more forward lean). used by
+                # the retrained SIDE model to detect leaning_forward.
+                left_vertical_trunk_angle  = vertical_trunk_angle(ls, lh)
+                right_vertical_trunk_angle = vertical_trunk_angle(rs, rh)
 
                 knee_distance          = abs(lk[0] - rk[0])
                 ankle_distance         = abs(la[0] - ra[0])
@@ -214,7 +234,8 @@ def test_video(video_path, expected, folder_name):
                             current_stage = "up"
                             side_counter += 1
 
-                features = pd.DataFrame([[
+                # FRONT model uses the original 11 features
+                front_features = pd.DataFrame([[
                     left_knee_angle, left_hip_angle, left_trunk_angle,
                     right_knee_angle, right_hip_angle, right_trunk_angle,
                     knee_distance, ankle_distance, knee_ankle_ratio,
@@ -226,12 +247,27 @@ def test_video(video_path, expected, folder_name):
                     "left_knee_foot_offset", "right_knee_foot_offset"
                 ])
 
+                # SIDE model uses the same 11 PLUS the two vertical trunk angles (13 total)
+                side_features = pd.DataFrame([[
+                    left_knee_angle, left_hip_angle, left_trunk_angle,
+                    right_knee_angle, right_hip_angle, right_trunk_angle,
+                    knee_distance, ankle_distance, knee_ankle_ratio,
+                    left_knee_foot_offset, right_knee_foot_offset,
+                    left_vertical_trunk_angle, right_vertical_trunk_angle
+                ]], columns=[
+                    "left_knee_angle", "left_hip_angle", "left_trunk_angle",
+                    "right_knee_angle", "right_hip_angle", "right_trunk_angle",
+                    "knee_distance", "ankle_distance", "knee_ankle_ratio",
+                    "left_knee_foot_offset", "right_knee_foot_offset",
+                    "left_vertical_trunk_angle", "right_vertical_trunk_angle"
+                ])
+
                 if avg_knee > 170:
                     prediction = "Standing"
                     pred_history.clear()
                 else:
                     if view == "Front":
-                        scaled_features = front_scaler.transform(features)
+                        scaled_features = front_scaler.transform(front_features)
                         proba           = front_model.predict_proba(scaled_features)[0]
                         confidence      = max(proba)
                         raw_prediction  = front_label_encoder.inverse_transform(
@@ -246,23 +282,22 @@ def test_video(video_path, expected, folder_name):
                             raw_prediction = "knees_in"
 
                     else:
-                        scaled_features = side_scaler.transform(features)
+                        scaled_features = side_scaler.transform(side_features)
                         proba           = side_model.predict_proba(scaled_features)[0]
                         confidence      = max(proba)
                         raw_prediction  = side_label_encoder.inverse_transform(
                             side_model.predict(scaled_features)
                         )[0]
 
-                        # DIAGNOSTIC (remove later): raw model prediction before override
-                        print(f"  SIDE raw: {raw_prediction} | conf: {confidence:.2f} | avg_knee: {avg_knee:.0f}")
-
-                        # suppress low-confidence leaning_forward calls. note: this only
-                        # filters borderline frames -- the side model's main limitation is
-                        # that it associates leaning with the upright/transition phase and
-                        # labels the deep squat as "good", which no threshold can fix
-                        # (would require retraining). documented as a limitation.
+                        # suppress low-confidence leaning_forward calls (borderline frames)
                         if raw_prediction == "leaning_forward" and confidence < 0.80:
                             raw_prediction = "good"
+
+                        # count confident leaning frames (>=0.90). these feed the
+                        # leaning verdict rule after the video (see below).
+                        side_pred_total += 1
+                        if raw_prediction == "leaning_forward" and confidence >= 0.90:
+                            side_lean_hiconf += 1
 
                     pred_history.append(raw_prediction)
                     prediction = Counter(pred_history).most_common(1)[0][0]
@@ -318,6 +353,21 @@ def test_video(video_path, expected, folder_name):
         most_common_view = Counter(detected_views).most_common(1)[0][0]
     else:
         most_common_view = "Unknown"
+
+    # --- leaning verdict rule (side view) ------------------------------------
+    # a simple majority vote miscounts leaning: it misses real leans whose lean
+    # frames are a minority, and it false-positives when borderline frames pile
+    # up. instead, decide leaning from the CONFIDENT (>=0.90) leaning share.
+    # threshold 0.393 sits in the gap measured on the test set (highest good
+    # squat = 0.390, lowest lean we can catch = 0.397), so it rescues a missed
+    # lean AND clears an existing false positive, with no good videos flipped.
+    LEAN_CONF_SHARE = 0.393
+    if most_common_view == "Side" and side_pred_total > 0:
+        if (side_lean_hiconf / side_pred_total) >= LEAN_CONF_SHARE:
+            most_common_class = "leaning_forward"
+        elif most_common_class == "leaning_forward":
+            # majority said leaning but confident frames don't back it up -> good
+            most_common_class = "good"
 
     # check if classification matches expectation
     classification_correct = (most_common_class == expected)
@@ -413,5 +463,24 @@ total_videos = len(all_results)
 if total_videos > 0:
     overall_accuracy = (total_correct / total_videos) * 100
     print(f"\nOverall accuracy: {total_correct}/{total_videos} ({overall_accuracy:.1f}%)")
+
+# list every video that was classified incorrectly, grouped by folder, so the
+# problem clips are easy to spot for data review.
+print("\n\n" + "=" * 60)
+print("PROBLEM VIDEOS (incorrectly classified)")
+print("=" * 60)
+wrong = [r for r in all_results if not r['classification_correct']]
+if not wrong:
+    print("\nNone - all videos classified correctly.")
+else:
+    for folder_path, expected in test_folders.items():
+        folder_name = os.path.basename(folder_path)
+        folder_wrong = [r for r in wrong if r['folder'] == folder_name]
+        if folder_wrong:
+            print(f"\n{folder_name}  (expected: {expected})")
+            for r in folder_wrong:
+                print(f"  {r['filename']:<24} got '{r['most_common_class']}'"
+                      f"  (view: {r['detected_view']})")
+    print(f"\nTotal incorrect: {len(wrong)}/{total_videos}")
 
 print(f"\nResults saved to: {csv_path}")

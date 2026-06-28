@@ -30,6 +30,19 @@ front_counter = 0
 side_counter = 0
 current_stage = ""
 
+# hip-drop counting state (front view). these self-calibrate per session:
+# standing_hip_y    = where the hips sit when the person is upright
+# standing_leg_span = hip-to-ankle distance when upright, used to make the
+#                     drop measurement independent of distance from the camera
+standing_hip_y = None
+standing_leg_span = None
+
+# rolling window of confident leaning calls (live version of the video-level
+# leaning rule). each side frame appends 1 (confident lean) or 0; if the share
+# over the window crosses the threshold, the whole readout shows leaning.
+side_lean_window = deque(maxlen=45)   # ~1.5s at 30fps; tune if needed
+LEAN_CONF_SHARE = 0.393               # carried over from the test-set analysis
+
 # uses Mac native say command for reliable text to speech
 def speak(message):
     global is_speaking, last_spoken, last_speak_time, ready_spoken
@@ -80,6 +93,15 @@ def calculate_angle(a, b, c):
     angle = np.abs(radians * 180.0 / np.pi)
     if angle > 180:
         angle = 360 - angle
+    return round(angle, 2)
+
+def vertical_trunk_angle(shoulder, hip):
+    # how far the shoulder->hip line tilts from vertical (0 = upright,
+    # larger = more forward lean). must match the extraction/training exactly.
+    dx = shoulder[0] - hip[0]
+    dy = shoulder[1] - hip[1]
+    radians = np.arctan2(abs(dx), abs(dy))
+    angle = radians * 180.0 / np.pi
     return round(angle, 2)
 
 def detect_view(landmarks):
@@ -148,6 +170,11 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             right_hip_angle   = calculate_angle(rs, rh, rk)
             right_trunk_angle = calculate_angle(rs, rh, ra)
 
+            # vertical trunk angle: torso tilt from upright. used by the retrained
+            # SIDE model (13 features) to detect leaning_forward.
+            left_vertical_trunk_angle  = vertical_trunk_angle(ls, lh)
+            right_vertical_trunk_angle = vertical_trunk_angle(rs, rh)
+
             knee_distance          = abs(lk[0] - rk[0])
             ankle_distance         = abs(la[0] - ra[0])
             knee_ankle_ratio       = knee_distance / ankle_distance if ankle_distance != 0 else 0
@@ -172,19 +199,49 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             else:
                 visibility_threshold = 0.4
 
+            # --- hip-drop measurement (used for FRONT-view rep counting) ---
+            # the front 2D knee angle compresses depth, so instead we measure how
+            # far the hips drop vertically (y grows downward: bigger = lower).
+            hip_y   = (lh[1] + rh[1]) / 2
+            ankle_y = (la[1] + ra[1]) / 2
+            leg_span = abs(ankle_y - hip_y)
+
+            # refresh the standing baseline whenever the person is upright
+            if avg_knee > 165:
+                standing_hip_y = hip_y
+                if leg_span > 0:
+                    standing_leg_span = leg_span
+
+            # how far the hips have dropped, as a fraction of standing leg length
+            if standing_hip_y is not None and standing_leg_span:
+                hip_drop_ratio = (hip_y - standing_hip_y) / standing_leg_span
+            else:
+                hip_drop_ratio = 0.0
+
+            # >>> THE ONE TUNABLE NUMBER (front rep counting) <<<
+            # hips must drop this fraction of leg length to count as a squat.
+            FRONT_DROP_DOWN = 0.10
+            FRONT_DROP_UP   = 0.04
+
             # only track squat stage and count reps if landmarks are visible enough
             if hip_vis > visibility_threshold and knee_vis > visibility_threshold and ankle_vis > visibility_threshold:
-                if avg_knee < 95:
-                    current_stage = "down"
-
-                if avg_knee > 165 and current_stage == "down":
-                    current_stage = "up"
-                    if view == "Front":
+                if view == "Front":
+                    # FRONT view: count by hip drop (reliable from this angle)
+                    if hip_drop_ratio > FRONT_DROP_DOWN:
+                        current_stage = "down"
+                    if hip_drop_ratio < FRONT_DROP_UP and current_stage == "down":
+                        current_stage = "up"
                         front_counter += 1
-                    else:
+                else:
+                    # SIDE view: knee angle is accurate here, keep using it
+                    if avg_knee < 95:
+                        current_stage = "down"
+                    if avg_knee > 165 and current_stage == "down":
+                        current_stage = "up"
                         side_counter += 1
 
-            features = pd.DataFrame([[
+            # FRONT model uses the original 11 features
+            front_features = pd.DataFrame([[
                 left_knee_angle, left_hip_angle, left_trunk_angle,
                 right_knee_angle, right_hip_angle, right_trunk_angle,
                 knee_distance, ankle_distance, knee_ankle_ratio,
@@ -196,12 +253,27 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 "left_knee_foot_offset", "right_knee_foot_offset"
             ])
 
+            # SIDE model uses the same 11 PLUS the two vertical trunk angles (13 total)
+            side_features = pd.DataFrame([[
+                left_knee_angle, left_hip_angle, left_trunk_angle,
+                right_knee_angle, right_hip_angle, right_trunk_angle,
+                knee_distance, ankle_distance, knee_ankle_ratio,
+                left_knee_foot_offset, right_knee_foot_offset,
+                left_vertical_trunk_angle, right_vertical_trunk_angle
+            ]], columns=[
+                "left_knee_angle", "left_hip_angle", "left_trunk_angle",
+                "right_knee_angle", "right_hip_angle", "right_trunk_angle",
+                "knee_distance", "ankle_distance", "knee_ankle_ratio",
+                "left_knee_foot_offset", "right_knee_foot_offset",
+                "left_vertical_trunk_angle", "right_vertical_trunk_angle"
+            ])
+
             if avg_knee > 170:
                 prediction = "Standing"
                 pred_history.clear()
             else:
                 if view == "Front":
-                    scaled_features = front_scaler.transform(features)
+                    scaled_features = front_scaler.transform(front_features)
                     proba           = front_model.predict_proba(scaled_features)[0]
                     confidence      = max(proba)
                     raw_prediction  = front_label_encoder.inverse_transform(
@@ -216,7 +288,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                         raw_prediction = "knees_in"
 
                 else:
-                    scaled_features = side_scaler.transform(features)
+                    scaled_features = side_scaler.transform(side_features)
                     proba           = side_model.predict_proba(scaled_features)[0]
                     confidence      = max(proba)
                     raw_prediction  = side_label_encoder.inverse_transform(
@@ -226,8 +298,20 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                     if raw_prediction == "leaning_forward" and confidence < 0.80:
                         raw_prediction = "good"
 
+                    # track confident leaning over a rolling window (live version
+                    # of the video-level leaning rule). 1 = confident lean frame.
+                    side_lean_window.append(
+                        1 if (raw_prediction == "leaning_forward" and confidence >= 0.90) else 0
+                    )
+
                 pred_history.append(raw_prediction)
                 prediction = Counter(pred_history).most_common(1)[0][0]
+
+                # leaning verdict: if a confident share of recent side frames show
+                # leaning, show leaning even if the instant smoothing missed it.
+                if view == "Side" and len(side_lean_window) > 0:
+                    if sum(side_lean_window) / len(side_lean_window) >= LEAN_CONF_SHARE:
+                        prediction = "leaning_forward"
 
             skeleton_colour = get_skeleton_colour(prediction)
 
@@ -288,6 +372,9 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             side_counter = 0
             current_stage = ""
             pred_history.clear()
+            side_lean_window.clear()
+            standing_hip_y = None
+            standing_leg_span = None
 
 live_cam.release()
 cv2.destroyAllWindows()

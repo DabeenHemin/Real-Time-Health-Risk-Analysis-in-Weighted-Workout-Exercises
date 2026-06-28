@@ -28,12 +28,27 @@ def calculate_angle(a, b, c):
         angle = 360 - angle
     return round(angle, 2)
 
+# Calculates how far the torso tilts away from vertical (straight up).
+# Uses the shoulder->hip line and measures its angle from the vertical axis.
+# A perfectly upright torso = 0 degrees; the more the person leans forward,
+# the larger this angle becomes. This isolates trunk lean from squat depth,
+# unlike the shoulder-hip-ankle angle which barely changes when leaning.
+def vertical_trunk_angle(shoulder, hip):
+    dx = shoulder[0] - hip[0]
+    dy = shoulder[1] - hip[1]
+    # angle of the torso line measured from the vertical axis
+    radians = np.arctan2(abs(dx), abs(dy))
+    angle = radians * 180.0 / np.pi
+    return round(angle, 2)
+
 #  Checks the dataset folder to see if it exists before doing anything
 if not os.path.exists(squat_dataset):
     print(f"ERROR: Dataset folder not found at: {squat_dataset}")
     exit()
 
 # Sets column headers for both CSVs
+# NOTE: added left/right_vertical_trunk_angle (new lean feature) and the raw
+# shoulder/hip coordinates so future features can be tested without re-extracting.
 csv_header = [
     "file",
     "class",
@@ -47,7 +62,13 @@ csv_header = [
     "ankle_distance",
     "knee_ankle_ratio",
     "left_knee_foot_offset",
-    "right_knee_foot_offset"
+    "right_knee_foot_offset",
+    "left_vertical_trunk_angle",
+    "right_vertical_trunk_angle",
+    "left_shoulder_x", "left_shoulder_y",
+    "left_hip_x", "left_hip_y",
+    "right_shoulder_x", "right_shoulder_y",
+    "right_hip_x", "right_hip_y"
 ]
 
 # Output paths for both CSVs
@@ -141,6 +162,10 @@ for view in ["Side", "Front"]:
                                 right_hip_angle   = calculate_angle(rs, rh, rk)
                                 right_trunk_angle = calculate_angle(rs, rh, ra)
 
+                                # NEW: vertical trunk angle (torso tilt from upright)
+                                left_vertical_trunk_angle  = vertical_trunk_angle(ls, lh)
+                                right_vertical_trunk_angle = vertical_trunk_angle(rs, rh)
+
                                 # calculate distance features for knees_in detection
                                 knee_distance        = abs(lk[0] - rk[0])
                                 ankle_distance       = abs(la[0] - ra[0])
@@ -156,7 +181,10 @@ for view in ["Side", "Front"]:
                                         left_knee_angle, left_hip_angle, left_trunk_angle,
                                         right_knee_angle, right_hip_angle, right_trunk_angle,
                                         knee_distance, ankle_distance, knee_ankle_ratio,
-                                        left_knee_foot_offset, right_knee_foot_offset
+                                        left_knee_foot_offset, right_knee_foot_offset,
+                                        left_vertical_trunk_angle, right_vertical_trunk_angle,
+                                        ls[0], ls[1], lh[0], lh[1],
+                                        rs[0], rs[1], rh[0], rh[1]
                                     ])
                                 rows_written += 1
 

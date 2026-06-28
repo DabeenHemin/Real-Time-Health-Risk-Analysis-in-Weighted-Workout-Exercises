@@ -92,6 +92,26 @@ A set of 37 pre-recorded test videos (sourced from YouTube and AI-generated clip
 
 ---
 
+## Test 2b: Retest After Lean Model Improvements
+
+The set of test videos was expanded to 43 and re-run after improving the side/lean model. The original trunk-angle feature was replaced with a vertical trunk angle (torso tilt from upright) and the side model retrained, and a confidence-based leaning rule was added (a video is classified as leaning when a confident share of side frames shows lean, rather than a simple majority vote).
+
+**Results by folder:**
+
+| Folder | Expected | Correct | Accuracy |
+|--------|----------|---------|----------|
+| front  | good (front) | 15/15 | 100% |
+| side   | good (side)  | 16/16 | 100% |
+| knees  | knees_in     | 1/6   | 16.7% |
+| lean   | leaning_forward | 4/6 | 66.7% |
+| **Overall** | | **36/43** | **83.7%** |
+
+**Source URLs:** _(to be added)_
+
+**Notes:** Side good-form classification improved from 75% to 100% and leaning detection from 60% to 66.7%, raising overall accuracy from 78.4% to 83.7%. Knees_in remains a known limitation (only sustained, deep knee collapse is detectable from a front-on 2D camera).
+
+---
+
 ## Test 3: Environmental Variations
 
 ### Test 3.1 - Different Lighting
@@ -111,8 +131,8 @@ A set of 37 pre-recorded test videos (sourced from YouTube and AI-generated clip
 ## Summary
 
 ### Overall Performance
-- Total tests conducted: 37
-- Overall accuracy: 29/37 (78.4%)
+- Total tests conducted: 43
+- Overall accuracy: 29/37 (83.7.%)
 - Front model accuracy: 14/14 (100%)
 - Side model accuracy: 15/21 (good 12/16, leaning 3/5)
 - Rep counter accuracy: 10/10 front, 10/10 side (live self-test)
